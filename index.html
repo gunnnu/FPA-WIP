@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+    <title>Document</title>
+  </head>
+  <body>
+    <form action="" method="post">
+      <label for="UN">Username</label>
+      <br />
+      <input type="text" id="UN" />
+    </form>
+    <script>
+      const fancyFetch = async (path, payload = "") => {
+        const headers = {
+          "X-Requested-With": "XMLHttpRequest"
+        };
+        if (payload && !(payload instanceof FormData)) {
+          headers["Content-Type"] = "application/json";
+          payload = JSON.stringify(payload);
+        }
+        const res = await fetch(path, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: headers,
+          body: payload
+        });
+        if (res.status === 200) {
+          // Server authentication succeeded
+          return res.json();
+        } else {
+          // Server authentication failed
+          const result = await res.json();
+          throw result.error;
+        }
+      };
+
+      const registerCredential = async () => {
+        const opts = {
+          attestation: "none",
+          authenticatorSelection: {
+            authenticatorAttachment: "platform",
+            userVerification: "required",
+            requireResidentKey: false
+          }
+        };
+
+        const options = await fancyFetch("/auth/registerRequest", opts);
+
+        options.user.id = window.atob(options.user.id);
+        options.challenge = window.atob(options.challenge);
+        console.log(options);
+
+        if (options.excludeCredentials) {
+          for (let cred of options.excludeCredentials) {
+            cred.id = window.atob(cred.id);
+          }
+        }
+
+        const cred = await navigator.credentials.create({
+          publicKey: options
+        });
+
+        const credential = {};
+        credential.id = cred.id;
+        credential.rawId = window.btoa(cred.rawId);
+        credential.type = cred.type;
+
+        if (cred.response) {
+          const clientDataJSON = window.btoa(cred.response.clientDataJSON);
+          const attestationObject = window.btoa(
+            cred.response.attestationObject
+          );
+          credential.response = {
+            clientDataJSON,
+            attestationObject
+          };
+        }
+
+        localStorage.setItem(`credId`, credential.id);
+
+        return await fancyFetch("/auth/registerResponse", credential);
+      };
+
+      const authenticate = async () => {
+        const opts = {};
+
+        let url = "/auth/signinRequest";
+        const credId = localStorage.getItem(`credId`);
+        if (credId) {
+          url += `?credId=${encodeURIComponent(credId)}`;
+        }
+
+        const options = await fancyFetch(url, opts);
+
+        if (options.allowCredentials.length === 0) {
+          console.info("No registered credentials found.");
+          return Promise.resolve(null);
+        }
+
+        options.challenge = window.atob(options.challenge);
+
+        for (let cred of options.allowCredentials) {
+          cred.id = window.atob(cred.id);
+        }
+
+        const cred = await navigator.credentials.get({
+          publicKey: options
+        });
+        const credential = {};
+        credential.id = cred.id;
+        credential.type = cred.type;
+        credential.rawId = window.btoa(cred.rawId);
+
+        if (cred.response) {
+          const clientDataJSON = window.btoa(cred.response.clientDataJSON);
+          const authenticatorData = window.btoa(
+            cred.response.authenticatorData
+          );
+          const signature = window.btoa(cred.response.signature);
+          const userHandle = window.btoa(cred.response.userHandle);
+          credential.response = {
+            clientDataJSON,
+            authenticatorData,
+            signature,
+            userHandle
+          };
+        }
+
+        return await fancyFetch(`/auth/signinResponse`, credential);
+      };
+
+      const unregisterCredential = async (credId) => {
+        localStorage.removeItem("credId");
+        return fancyFetch(
+          `/auth/removeKey?credId=${encodeURIComponent(credId)}`
+        );
+      };
+    </script>
+  </body>
+</html>
